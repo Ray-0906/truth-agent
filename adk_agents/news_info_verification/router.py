@@ -49,6 +49,16 @@ class NormalizedAgentTool(AgentTool):
         normalized = self._normalize_args(args)
         return await super().run_async(args=normalized, tool_context=tool_context)
 
+
+class FinalReportAgentTool(NormalizedAgentTool):
+    """AgentTool wrapper that avoids recomputing the final report."""
+
+    async def run_async(self, *, args: Any, tool_context) -> Any:  # type: ignore[override]
+        existing = tool_context.session.state.get(STATE_KEYS.FINAL_REPORT)
+        if existing:
+            return existing
+        return await super().run_async(args=args, tool_context=tool_context)
+
 from .config import MODEL, STATE_KEYS
 from .lanes import fact_check_agent, news_check_agent, create_scam_check_agent
 from .reporting import create_final_report_agent
@@ -78,7 +88,7 @@ def create_content_routing_agent(model: str = MODEL) -> LlmAgent:
             "where the request string is the user claim you want that lane to analyse. Do not pass nested JSON, prior lane "
             "outputs, or additional fields.\n"
             "4. If an intent does not apply, document the reason (e.g., 'no URLs provided' for scam) for later reporting.\n"
-            "5. Once all chosen lanes finish, invoke FinalProcessingAgent exactly once using {\"request\": \"summarize\"} to build the final Markdown.\n"
+            "5. Once all chosen lanes finish, invoke FinalProcessingAgent exactly once using {\"request\": \"summarize\"} to build the final Markdown. Do not call it again if state already contains the final report.\n"
             f"6. After FinalProcessingAgent returns, respond to the user with session.state[{STATE_KEYS.FINAL_REPORT!r}] and nothing else.\n\n"
             "Guardrails:\n"
             "- Honor tool output verbatim; if a lane signals error or no_data, surface that in the final summary.\n"
@@ -89,7 +99,7 @@ def create_content_routing_agent(model: str = MODEL) -> LlmAgent:
             NormalizedAgentTool(news_lane_agent),
             NormalizedAgentTool(fact_lane_agent),
             NormalizedAgentTool(scam_lane_agent),
-            NormalizedAgentTool(final_report_agent),
+            FinalReportAgentTool(final_report_agent),
         ],
         output_key=STATE_KEYS.FINAL_REPORT,
     )
